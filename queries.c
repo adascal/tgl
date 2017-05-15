@@ -4275,17 +4275,13 @@ static struct query_methods delete_msg_methods = {
   .name = "delete message"
 };
 
-void tgl_do_delete_msg (struct tgl_state *TLS, tgl_message_id_t *_msg_id, void (*callback)(struct tgl_state *TLS, void *callback_extra, int success), void *callback_extra) {
-  tgl_message_id_t msg_id = *_msg_id;
-  if (msg_id.peer_type == TGL_PEER_TEMP_ID) {
-    msg_id = tgl_convert_temp_msg_id (TLS, msg_id);
-  }
-  if (msg_id.peer_type == TGL_PEER_TEMP_ID) {
-    tgl_set_query_error (TLS, EINVAL, "unknown message");
-    if (callback) {
-      callback (TLS, callback_extra, 0);
-    }
-    return;
+void tgl_do_delete_msg (struct tgl_state *TLS, long long id, void (*callback)(struct tgl_state *TLS, void *callback_extra, int success), void *callback_extra) {
+  struct tgl_message *M = tgl_message_get (TLS, id);
+  if (tgl_get_peer_type (M->to_id) == TGL_PEER_ENCR_CHAT) {
+     M->action.type=tgl_message_action_delete_messages;
+     M->flags |=TGLMF_SERVICE;
+     tgl_do_send_msg (TLS, M, 0, 0);
+     return;
   }
   clear_packet ();
   if (msg_id.peer_type == TGL_PEER_CHANNEL) {
