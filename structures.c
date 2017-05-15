@@ -24,7 +24,9 @@
 
 #include <assert.h>
 #include <string.h>
+#ifdef HAVE_STRINGS_H
 #include <strings.h>
+#endif
 #include "tgl-structures.h"
 #include "mtproto-common.h"
 //#include "telegram.h"
@@ -44,6 +46,16 @@
 #include "auto/auto-skip.h"
 #include "auto/auto-fetch-ds.h"
 #include "auto/auto-free-ds.h"
+
+#define sha1 SHA1
+#if defined(WIN32) || defined(_WIN32)
+#define bzero(b,len) (memset((b), '\0', (len)) )
+#endif
+
+struct random2local {
+  long long random_id;
+  int local_id;
+};
 
 static int id_cmp (struct tgl_message *M1, struct tgl_message *M2);
 #define peer_cmp(a,b) (tgl_cmp_peer_id (a->id, b->id))
@@ -1784,8 +1796,8 @@ struct tgl_message *tglf_fetch_encrypted_message (struct tgl_state *TLS, struct 
   }
 
   struct tl_ds_decrypted_message *DS_DM = DS_DML->message;
-  if (M->permanent_id.id != DS_LVAL (DS_DM->random_id)) {
-    vlogprintf (E_ERROR, "Incorrect message: id = %" INT64_PRINTF_MODIFIER "d, new_id = %" INT64_PRINTF_MODIFIER "d\n", M->permanent_id.id, DS_LVAL (DS_DM->random_id));
+  if (M->id != DS_LVAL (DS_DM->random_id)) {
+    vlogprintf (E_ERROR, "Incorrect message: id = %"_PRINTF_INT64_"d, new_id = %"_PRINTF_INT64_"d\n", M->id, DS_LVAL (DS_DM->random_id));
     free_ds_type_decrypted_message_layer (DS_DML, TYPE_TO_PARAM(decrypted_message_layer));
     return M;
   }
@@ -2170,7 +2182,7 @@ void tgls_free_message_media (struct tgl_state *TLS, struct tgl_message_media *M
     return;
   case tgl_message_media_photo:
     tgls_free_photo (TLS, M->photo);
-    if (M->caption) { tfree_str (M->caption); }
+    if (M->caption) { tfree_str(M->caption); }
     M->photo = NULL;
     return;
   case tgl_message_media_contact:
@@ -2182,7 +2194,7 @@ void tgls_free_message_media (struct tgl_state *TLS, struct tgl_message_media *M
   case tgl_message_media_video:
   case tgl_message_media_audio:
     tgls_free_document (TLS, M->document);
-    if (M->caption) { tfree_str (M->caption); }
+    if (M->caption) { tfree_str(M->caption); }
     return;
   case tgl_message_media_unsupported:
     return;
@@ -2282,7 +2294,7 @@ void tgls_free_reply_markup (struct tgl_state *TLS, struct tgl_message_reply_mar
   if (!--R->refcnt) {
     int i;
     for (i = 0; i < R->row_start[R->rows]; i++) {
-      tfree_str (R->buttons[i]);
+       tfree_str(R->buttons[i]);
     }
     tfree (R->buttons, R->row_start[R->rows] * sizeof (void *));
     tfree (R->row_start, 4 * (R->rows + 1));
@@ -2307,7 +2319,7 @@ void tgls_free_chat (struct tgl_state *TLS, struct tgl_chat *U) {
     tfree (U->user_list, U->user_list_size * 12);
   }
   if (U->photo) { tgls_free_photo (TLS, U->photo); }
-  tfree (U, sizeof (tgl_peer_t));
+  tfree(U, sizeof(tgl_peer_t));
 }
 
 void tgls_free_user (struct tgl_state *TLS, struct tgl_user *U) {
@@ -2315,28 +2327,19 @@ void tgls_free_user (struct tgl_state *TLS, struct tgl_user *U) {
   if (U->last_name) { tfree_str (U->last_name); }
   if (U->print_name) { tfree_str (U->print_name); }
   if (U->phone) { tfree_str (U->phone); }
-  if (U->username) { tfree_str (U->username); }
+  if (U->username) { tfree_str(U->username); }
   if (U->real_first_name) { tfree_str (U->real_first_name); }
   if (U->real_last_name) { tfree_str (U->real_last_name); }
   if (U->status.ev) { tgl_remove_status_expire (TLS, U); }
   if (U->photo) { tgls_free_photo (TLS, U->photo); }
-  if (U->bot_info) { tgls_free_bot_info (TLS, U->bot_info); }
-  tfree (U, sizeof (tgl_peer_t));
+  if (U->bot_info) { tgls_free_bot_info(TLS, U->bot_info); }
+  tfree(U, sizeof(tgl_peer_t));
 }
 
 void tgls_free_encr_chat (struct tgl_state *TLS, struct tgl_secret_chat *U) {
   if (U->print_name) { tfree_str (U->print_name); }
   if (U->g_key) { tfree (U->g_key, 256); } 
-  tfree (U, sizeof (tgl_peer_t));
-}
-
-void tgls_free_channel (struct tgl_state *TLS, struct tgl_channel *U) {
-  if (U->print_title) { tfree_str (U->print_title); }
-  if (U->username) { tfree_str (U->username); }
-  if (U->title) { tfree_str (U->title); }
-  if (U->about) { tfree_str (U->about); }
-  if (U->photo) { tgls_free_photo (TLS, U->photo); }
-  tfree (U, sizeof (tgl_peer_t));
+  tfree(U, sizeof(tgl_peer_t));
 }
 
 void tgls_free_peer (struct tgl_state *TLS, tgl_peer_t *P) {
@@ -2683,8 +2686,7 @@ void tgl_free_all (struct tgl_state *TLS) {
   tree_act_ex_message (TLS->message_unsent_tree, tgls_free_message_gw, TLS);
   TLS->message_unsent_tree = tree_clear_message (TLS->message_unsent_tree);
   tglq_query_free_all (TLS);
-  TLS->random_id_tree = tree_clear_random_id (TLS->random_id_tree);
-  TLS->temp_id_tree = tree_clear_temp_id (TLS->temp_id_tree);
+  TLS->random_id_tree = tree_clear_random_id(TLS->random_id_tree);
 
   if (TLS->encr_prime) { tfree (TLS->encr_prime, 256); }
 
@@ -2692,16 +2694,15 @@ void tgl_free_all (struct tgl_state *TLS) {
   if (TLS->binlog_name) { tfree_str (TLS->binlog_name); }
   if (TLS->auth_file) { tfree_str (TLS->auth_file); }
   if (TLS->downloads_directory) { tfree_str (TLS->downloads_directory); }
-  if (TLS->app_hash) { tfree_str (TLS->app_hash); }
-  if (TLS->app_version) { tfree_str (TLS->app_version); }
+  if (TLS->app_hash) { tfree_str(TLS->app_hash); }
 
   if (TLS->error) {
-    tfree_str (TLS->error);
+    tfree_str(TLS->error);
   }
   int i;
   for (i = 0; i < TLS->rsa_key_num; i++) {
     if (TLS->rsa_key_list[i]) {
-      tfree_str (TLS->rsa_key_list[i]);
+       tfree_str(TLS->rsa_key_list[i]);
     }
   }
 
@@ -2714,8 +2715,8 @@ void tgl_free_all (struct tgl_state *TLS) {
   if (TLS->ev_login) { TLS->timer_methods->free (TLS->ev_login); }
   if (TLS->online_updates_timer) { TLS->timer_methods->free (TLS->online_updates_timer); }
 
-  tfree (TLS->Peers, TLS->peer_size * sizeof (void *));
-  tfree (TLS, sizeof (*TLS));
+  tfree(TLS->Peers, TLS->peer_size * sizeof(void *));
+  tfree(TLS, sizeof(*TLS));
 }
 
 int tgl_print_stat (struct tgl_state *TLS, char *s, int len) {

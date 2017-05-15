@@ -61,14 +61,7 @@ void tgl_set_rsa_key (struct tgl_state *TLS, const char *key) {
   assert (TLS->rsa_key_num < TGL_MAX_RSA_KEYS_NUM);
   TLS->rsa_key_list[TLS->rsa_key_num ++] = tstrdup (key);
 }
-
-void tgl_set_rsa_key_direct (struct tgl_state *TLS, unsigned long e, int n_bytes, const unsigned char *n) {
-  assert (TLS->rsa_key_num < TGL_MAX_RSA_KEYS_NUM);
-  TLS->rsa_key_list[TLS->rsa_key_num] = NULL;
-  TLS->rsa_key_loaded[TLS->rsa_key_num] = TGLC_rsa_new (e, n_bytes, n);
-  TLS->rsa_key_num ++;
-}
-
+#include <openssl/evp.h>
 int tgl_init (struct tgl_state *TLS) {
   assert (TLS->timer_methods);
   assert (TLS->net_methods);
@@ -82,7 +75,7 @@ int tgl_init (struct tgl_state *TLS) {
   TLS->message_list.next_use = &TLS->message_list;
   TLS->message_list.prev_use = &TLS->message_list;
 
-  if (tglmp_on_start (TLS) < 0) {
+  if (tglmp_on_start(TLS) < 0) {
     return -1;
   }
   
@@ -109,7 +102,7 @@ void tgl_register_app_id (struct tgl_state *TLS, int app_id, const char *app_has
 }
 
 struct tgl_state *tgl_state_alloc (void) {
-  return (struct tgl_state *)talloc0 (sizeof (struct tgl_state));
+  return (struct tgl_state *)talloc0(sizeof(struct tgl_state));
 }
 
 void tgl_incr_verbosity (struct tgl_state *TLS) {

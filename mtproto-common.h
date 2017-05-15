@@ -350,7 +350,7 @@ static inline void fetch256 (void *buf) {
   assert (l >= 0);
   char *s = fetch_str (l);
   if (l < 256) {
-    memcpy (buf + 256 - l, s, l);
+    memcpy ((char *)buf + 256 - l, s, l);
     memset (buf, 0, 256 - l);
   } else {
     memcpy (buf, s + (l - 256), 256);
@@ -384,7 +384,7 @@ static inline void hexdump_out (void) {
   hexdump (packet_buffer, packet_ptr);
 }*/
 
-#ifndef CLOCK_REALTIME
+#if defined(__MACH__) || defined(WIN32) || defined(_WIN32)
 #define CLOCK_REALTIME 0
 #define CLOCK_MONOTONIC 1
 #endif

@@ -26,9 +26,8 @@ configure.scan
 configure
 dep/
 libs/
-libtool
-nbproject/
-objs/
-stamp-h
-stamp-h.in
-stamp-h1
+*.sdf
+*.opensdf
+*.user
+build
+
