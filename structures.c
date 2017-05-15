@@ -113,7 +113,7 @@ char *tgls_default_create_print_name (struct tgl_state *TLS, tgl_peer_id_t id, c
     s++;
   }
   s = buf;
-  int fl = strlen (s);
+  int fl = tstrlen (s);
   int cc = 0;
   while (1) {
     tgl_peer_t *P = tgl_peer_get_by_name (TLS, s);
@@ -1594,27 +1594,25 @@ struct tgl_message *tglf_fetch_alloc_message (struct tgl_state *TLS, struct tl_d
   
     tgl_peer_id_t to_id = T->id;
 
-    tgl_peer_id_t fwd_from_id;
-    if (DS_M->fwd_from_id) {
-      fwd_from_id = FF->id;
-    } else {
-      fwd_from_id = TGL_MK_USER (0);
-    }
-
-    bl_do_edit_message (TLS, &msg_id,
-      DS_M->from_id ? &from_id : NULL,
-      &to_id,
-      DS_M->fwd_from_id ? &fwd_from_id : NULL,
-      DS_M->fwd_date,
-      DS_M->date,
-      DS_STR (DS_M->message),
-      DS_M->media,
-      DS_M->action,
-      DS_M->reply_to_msg_id,
-      DS_M->reply_markup,
-      (void *)DS_M->entities,
-      flags | TGLMF_CREATE | TGLMF_CREATED
-    );
+void tglf_tglf_fetch_geo_message (struct tgl_state *TLS, struct tgl_message *M) {
+  memset (M, 0, sizeof (*M));
+  unsigned x = fetch_int ();
+  assert (x == CODE_geo_chat_message_empty || x == CODE_geo_chat_message || x == CODE_geo_chat_message_service);
+  M->to_id = TGL_MK_GEO_CHAT (fetch_int ());
+  M->id = fetch_int ();
+  if (x == CODE_geo_chat_message_empty) {
+    M->flags |= 1;
+    return;
+  }
+  M->from_id = TGL_MK_USER (fetch_int ());
+  M->date = fetch_int ();
+  if (x == CODE_geo_chat_message_service) {
+    M->service = 1;
+    tglf_fetch_message_action (TLS, &M->action);
+  } else {
+    M->message = fetch_str_dup ();
+    M->message_len = tstrlen (M->message);
+    tglf_fetch_message_media (TLS, &M->media);
   }
   return M;
 }
@@ -1853,9 +1851,105 @@ static void increase_peer_size (struct tgl_state *TLS) {
   }
 }
 
-struct tgl_message *tglf_fetch_alloc_encrypted_message (struct tgl_state *TLS, struct tl_ds_encrypted_message *DS_EM) {
-  struct tgl_message *M = tglf_fetch_encrypted_message (TLS, DS_EM);
-  if (!M) { return M; }
+struct tgl_user *tglf_fetch_alloc_user (struct tgl_state *TLS) {
+  int data[2];
+  prefetch_data (data, 8);
+  tgl_peer_t *U = tgl_peer_get (TLS, TGL_MK_USER (data[1]));
+  if (!U) {
+    TLS->users_allocated ++;
+    U = talloc0 (sizeof (*U));
+    U->id = TGL_MK_USER (data[1]);
+    TLS->peer_tree = tree_insert_peer (TLS->peer_tree, U, irand48 ());
+    increase_peer_size (TLS);
+    TLS->Peers[TLS->peer_num ++] = U;
+  }
+  tglf_fetch_user (TLS, &U->user);
+  return &U->user;
+}
+
+struct tgl_secret_chat *tglf_fetch_alloc_encrypted_chat (struct tgl_state *TLS) {
+  int data[2];
+  prefetch_data (data, 8);
+  tgl_peer_t *U = tgl_peer_get (TLS, TGL_MK_ENCR_CHAT (data[1]));
+  if (!U) {
+    U = talloc0 (sizeof (*U));
+    U->id = TGL_MK_ENCR_CHAT (data[1]);
+    TLS->encr_chats_allocated ++;
+    TLS->peer_tree = tree_insert_peer (TLS->peer_tree, U, irand48 ());
+    increase_peer_size (TLS);
+    TLS->Peers[TLS->peer_num ++] = U;
+  }
+  tglf_fetch_encrypted_chat (TLS, &U->encr_chat);
+  return &U->encr_chat;
+}
+
+struct tgl_user *tglf_fetch_alloc_user_full (struct tgl_state *TLS) {
+  int data[3];
+  prefetch_data (data, 12);
+  tgl_peer_t *U = tgl_peer_get (TLS, TGL_MK_USER (data[2]));
+  if (U) {
+    tglf_fetch_user_full (TLS, &U->user);
+    return &U->user;
+  } else {
+    TLS->users_allocated ++;
+    U = talloc0 (sizeof (*U));
+    U->id = TGL_MK_USER (data[2]);
+    TLS->peer_tree = tree_insert_peer (TLS->peer_tree, U, irand48 ());
+    tglf_fetch_user_full (TLS, &U->user);
+    increase_peer_size (TLS);
+    TLS->Peers[TLS->peer_num ++] = U;
+    return &U->user;
+  }
+}
+
+struct tgl_message *tglf_fetch_alloc_message (struct tgl_state *TLS) {
+  int data[3];
+  prefetch_data (data, 12);
+  struct tgl_message *M = tgl_message_get (TLS, data[0] != (int)CODE_message_empty ? data[2] : data[1]);
+
+  if (!M) {
+    M = tglm_message_alloc (TLS, data[0] != (int)CODE_message_empty ? data[2] : data[1]);
+  }
+  tglf_fetch_message (TLS, M);
+  return M;
+}
+
+struct tgl_message *tglf_fetch_alloc_geo_message (struct tgl_state *TLS) {
+  struct tgl_message *M = talloc (sizeof (*M));
+  tglf_tglf_fetch_geo_message (TLS, M);
+  struct tgl_message *M1 = tree_lookup_message (TLS->message_tree, M);
+  TLS->messages_allocated ++;
+  if (M1) {
+    tglm_message_del_use (TLS, M1);
+    tglm_message_del_peer (TLS, M1);
+    tgls_clear_message (TLS, M1);
+    memcpy (M1, M, sizeof (*M));
+    tfree (M, sizeof (*M));
+    tglm_message_add_use (TLS, M1);
+    tglm_message_add_peer (TLS, M1);
+    TLS->messages_allocated --;
+    return M1;
+  } else {
+    tglm_message_add_use (TLS, M);
+    tglm_message_add_peer (TLS, M);
+    TLS->message_tree = tree_insert_message (TLS->message_tree, M, irand48 ());
+    return M;
+  }
+}
+
+struct tgl_message *tglf_fetch_alloc_encrypted_message (struct tgl_state *TLS) {
+  int data[3];
+  prefetch_data (data, 12);
+  struct tgl_message *M = tgl_message_get (TLS, *(long long *)(data + 1));
+
+  if (!M) {
+    M = talloc0 (sizeof (*M));
+    M->id = *(long long *)(data + 1);
+    tglm_message_insert_tree (TLS, M);
+    TLS->messages_allocated ++;
+    assert (tgl_message_get (TLS, M->id) == M);
+  }
+  tglf_fetch_encrypted_message (TLS, M);
 
   if (M->flags & TGLMF_CREATED) {
     tgl_peer_t *_E = tgl_peer_get (TLS, M->to_id);
@@ -1937,56 +2031,59 @@ struct tgl_message_reply_markup *tglf_fetch_alloc_reply_markup (struct tgl_state
   R->flags = DS_LVAL (DS_RM->flags);
   R->refcnt = 1;
 
-  R->rows = DS_RM->rows ? DS_LVAL (DS_RM->rows->cnt) : 0;
+struct tgl_chat *tglf_fetch_alloc_chat (struct tgl_state *TLS) {
+  int data[2];
+  prefetch_data (data, 8);
+  tgl_peer_t *U = tgl_peer_get (TLS, TGL_MK_CHAT (data[1]));
+  if (!U) {
+    TLS->chats_allocated ++;
+    U = talloc0 (sizeof (*U));
+    U->id = TGL_MK_CHAT (data[1]);
+    TLS->peer_tree = tree_insert_peer (TLS->peer_tree, U, irand48 ());
+    increase_peer_size (TLS);
+    TLS->Peers[TLS->peer_num ++] = U;
+  }
+  tglf_fetch_chat (TLS, &U->chat);
+  return &U->chat;
+}
 
-  int total = 0;
-  R->row_start = talloc ((R->rows + 1) * 4);
-  R->row_start[0] = 0;
-  int i;
-  for (i = 0; i < R->rows; i++) {
-    struct tl_ds_keyboard_button_row *DS_K = DS_RM->rows->data[i];
-    total += DS_LVAL (DS_K->buttons->cnt);
-    R->row_start[i + 1] = total;
+struct tgl_chat *tglf_fetch_alloc_chat_full (struct tgl_state *TLS) {
+  int data[3];
+  prefetch_data (data, 12);
+  tgl_peer_t *U = tgl_peer_get (TLS, TGL_MK_CHAT (data[2]));
+  if (U) {
+    tglf_fetch_chat_full (TLS, &U->chat);
+    return &U->chat;
+  } else {
+    TLS->chats_allocated ++;
+    U = talloc0 (sizeof (*U));
+    U->id = TGL_MK_CHAT (data[2]);
+    TLS->peer_tree = tree_insert_peer (TLS->peer_tree, U, irand48 ());
+    tglf_fetch_chat_full (TLS, &U->chat);
+    increase_peer_size (TLS);
+    TLS->Peers[TLS->peer_num ++] = U;
+    return &U->chat;
   }
-  R->buttons = talloc (sizeof (void *) * total);
-  int r = 0;
-  for (i = 0; i < R->rows; i++) {
-    struct tl_ds_keyboard_button_row *DS_K = DS_RM->rows->data[i];
-    int j;
-    for (j = 0; j < DS_LVAL (DS_K->buttons->cnt); j++) {
-      struct tl_ds_keyboard_button *DS_KB = DS_K->buttons->data[j];
-      R->buttons[r ++] = DS_STR_DUP (DS_KB->text);
-    }
-  }
-  assert (r == total);
-  return R;
 }
 /* }}} */
 
 void tglp_insert_encrypted_chat (struct tgl_state *TLS, tgl_peer_t *P) {
   TLS->encr_chats_allocated ++;
-  TLS->peer_tree = tree_insert_peer (TLS->peer_tree, P, rand ());
+  TLS->peer_tree = tree_insert_peer (TLS->peer_tree, P, irand48 ());
   increase_peer_size (TLS);
   TLS->Peers[TLS->peer_num ++] = P;
 }
 
 void tglp_insert_user (struct tgl_state *TLS, tgl_peer_t *P) {
   TLS->users_allocated ++;
-  TLS->peer_tree = tree_insert_peer (TLS->peer_tree, P, rand ());
+  TLS->peer_tree = tree_insert_peer (TLS->peer_tree, P, irand48 ());
   increase_peer_size (TLS);
   TLS->Peers[TLS->peer_num ++] = P;
 }
 
 void tglp_insert_chat (struct tgl_state *TLS, tgl_peer_t *P) {
   TLS->chats_allocated ++;
-  TLS->peer_tree = tree_insert_peer (TLS->peer_tree, P, rand ());
-  increase_peer_size (TLS);
-  TLS->Peers[TLS->peer_num ++] = P;
-}
-
-void tglp_insert_channel (struct tgl_state *TLS, tgl_peer_t *P) {
-  TLS->channels_allocated ++;
-  TLS->peer_tree = tree_insert_peer (TLS->peer_tree, P, rand ());
+  TLS->peer_tree = tree_insert_peer (TLS->peer_tree, P, irand48 ());
   increase_peer_size (TLS);
   TLS->Peers[TLS->peer_num ++] = P;
 }
@@ -2309,7 +2406,7 @@ void tglm_message_add_peer (struct tgl_state *TLS, struct tgl_message *M) {
       TLS->encr_chats_allocated ++;
       break;
     }
-    TLS->peer_tree = tree_insert_peer (TLS->peer_tree, P, rand ());
+    TLS->peer_tree = tree_insert_peer (TLS->peer_tree, P, irand48 ());
     increase_peer_size (TLS);
     TLS->Peers[TLS->peer_num ++] = P;
   }
@@ -2371,9 +2468,15 @@ struct tgl_message *tglm_message_alloc (struct tgl_state *TLS, tgl_message_id_t 
   return M;
 }
 
+void tglm_update_message_id (struct tgl_state *TLS, struct tgl_message *M, long long id) {
+  TLS->message_tree = tree_delete_message (TLS->message_tree, M);
+  M->id = id;
+  TLS->message_tree = tree_insert_message (TLS->message_tree, M, irand48 ());
+}
+
 void tglm_message_insert_tree (struct tgl_state *TLS, struct tgl_message *M) {
-  assert (M->permanent_id.id);
-  TLS->message_tree = tree_insert_message (TLS->message_tree, M, rand ());
+  assert (M->id);
+  TLS->message_tree = tree_insert_message (TLS->message_tree, M, irand48 ());
 }
 
 void tglm_message_remove_tree (struct tgl_state *TLS, struct tgl_message *M) {
@@ -2387,7 +2490,7 @@ void tglm_message_insert (struct tgl_state *TLS, struct tgl_message *M) {
 }
 
 void tglm_message_insert_unsent (struct tgl_state *TLS, struct tgl_message *M) {
-  TLS->message_unsent_tree = tree_insert_message (TLS->message_unsent_tree, M, rand ());
+  TLS->message_unsent_tree = tree_insert_message (TLS->message_unsent_tree, M, irand48 ());
 }
 
 void tglm_message_remove_unsent (struct tgl_state *TLS, struct tgl_message *M) {
@@ -2443,7 +2546,7 @@ void tgl_webpage_insert (struct tgl_state *TLS, struct tgl_webpage *P) {
 }
 
 void tglp_peer_insert_name (struct tgl_state *TLS, tgl_peer_t *P) {
-  TLS->peer_by_name_tree = tree_insert_peer_by_name (TLS->peer_by_name_tree, P, rand ());
+  TLS->peer_by_name_tree = tree_insert_peer_by_name (TLS->peer_by_name_tree, P, irand48 ());
 }
 
 void tglp_peer_delete_name (struct tgl_state *TLS, tgl_peer_t *P) {

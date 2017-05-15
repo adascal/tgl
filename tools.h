@@ -45,6 +45,7 @@ struct tgl_allocator {
 #define trealloc tgl_allocator->realloc
 #define tcheck tgl_allocator->check
 #define texists tgl_allocator->exists
+#define tstrlen tgl_strlen
 #define tstrdup tgl_strdup
 #define tmemdup tgl_memdup
 #define tstrndup tgl_strndup
@@ -85,11 +86,12 @@ void *tgl_realloc_debug (void *ptr, size_t old_size, size_t size);
 void *tgl_realloc_release (void *ptr, size_t old_size, size_t size);
 
 void *tgl_alloc0 (size_t size);
+int tgl_strlen (const char *s);
 char *tgl_strdup (const char *s);
 char *tgl_strndup (const char *s, size_t n);
 
-void tgl_free_debug (void *ptr, int size);
-void tgl_free_release (void *ptr, int size);
+void tgl_free_debug (void *ptr, size_t size);
+void tgl_free_release (void *ptr, size_t size);
 //void tgl_free_str (void *ptr);
 //void tgl_free_secure (void *ptr, int size);
 

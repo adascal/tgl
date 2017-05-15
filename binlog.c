@@ -654,11 +654,27 @@ void bl_do_user (struct tgl_state *TLS, int id, long long *access_hash, const ch
     U->last_read_out = *last_read_out;
     tgls_messages_mark_read (TLS, U->last, TGLMF_OUT, U->last_read_out);
   }
-  
-  if (bot_info) {
-    if (!U->bot_info || U->bot_info->version != DS_LVAL (bot_info->version)) {
-      if (U->bot_info) {
-        tgls_free_bot_info (TLS, U->bot_info);
+  int end = 0;
+  in_replay_log = 1;
+  while (1) {
+    if (!end && wptr - rptr < MAX_LOG_EVENT_SIZE / 4) {
+      if (wptr == rptr) {
+        wptr = rptr = binlog_buffer;
+      } else {
+        int x = wptr - rptr;
+        memcpy (binlog_buffer, rptr, 4 * x);
+        wptr -= (rptr - binlog_buffer);
+        rptr = binlog_buffer;
+      }
+      int l = (binlog_buffer + BINLOG_BUFFER_SIZE - wptr) * 4;
+      ssize_t k = read (fd, wptr, l);
+      if (k < 0) {
+        perror ("read binlog");
+        exit (2);
+      }
+      assert (!(k & 3));
+      if (k < l) { 
+        end = 1;
       }
       U->bot_info = tglf_fetch_alloc_bot_info (TLS, bot_info);
     }
@@ -712,21 +728,39 @@ void bl_do_chat (struct tgl_state *TLS, int id, const char *title, int title_len
     
     updates |= TGL_UPDATE_TITLE;
   }
-  
-  if (user_num) {
-    C->users_num = *user_num;
+}
+
+void bl_do_user_set_name (struct tgl_state *TLS, struct tgl_user *U, const char *f, int fl, const char *l, int ll) {
+  if ((U->first_name && tstrlen (U->first_name) == fl && !strncmp (U->first_name, f, fl)) &&
+      (U->last_name  && tstrlen (U->last_name)  == ll && !strncmp (U->last_name,  l, ll))) {
+    return;
   }
-  
-  if (date) {
-    C->date = *date;
+  clear_packet ();
+  out_int (CODE_binlog_user_set_name);
+  out_int (tgl_get_peer_id (U->id));
+  out_cstring (f, fl);
+  out_cstring (l, ll);
+  add_log_event (TLS, packet_buffer, 4 * (packet_ptr - packet_buffer));
+}
+
+void bl_do_user_set_username (struct tgl_state *TLS, struct tgl_user *U, const char *f, int l) {
+  if ((U->username && tstrlen (U->username) == l && !strncmp (U->username, f, l)) ||
+      (!l && !U->username)) {
+    return;
   }
 
-  if (chat_photo && chat_photo->photo_big) {
-    if (DS_LVAL (chat_photo->photo_big->secret) != C->photo_big.secret) {
-      tglf_fetch_file_location (TLS, &C->photo_big, chat_photo->photo_big);
-      tglf_fetch_file_location (TLS, &C->photo_small, chat_photo->photo_small);
-      updates |= TGL_UPDATE_PHOTO;
-    }
+void bl_do_user_set_access_hash (struct tgl_state *TLS, struct tgl_user *U, long long access_token) {
+  if (U->access_hash == access_token) { return; }
+  int *ev = alloc_log_event (16);
+  ev[0] = CODE_binlog_user_set_access_hash;
+  ev[1] = tgl_get_peer_id (U->id);
+  *(long long *)(ev + 2) = access_token;
+  add_log_event (TLS, ev, 16);
+}
+
+void bl_do_user_set_phone (struct tgl_state *TLS, struct tgl_user *U, const char *p, int pl) {
+  if (U->phone && tstrlen (U->phone) == pl && !strncmp (U->phone, p, pl)) {
+    return;
   }
 
   if (photo) {
@@ -763,8 +797,10 @@ void bl_do_chat (struct tgl_state *TLS, int id, const char *title, int title_len
         C->user_list[i].date = DS_LVAL (DS_P->date);
       }
 
-      updates |= TGL_UPDATE_MEMBERS;
-    }
+void bl_do_user_set_real_name (struct tgl_state *TLS, struct tgl_user *U, const char *f, int fl, const char *l, int ll) {
+  if ((U->real_first_name && tstrlen (U->real_first_name) == fl && !strncmp (U->real_first_name, f, fl)) &&
+      (U->real_last_name  && tstrlen (U->real_last_name)  == ll && !strncmp (U->real_last_name,  l, ll))) {
+    return;
   }
  
   if (last_read_in) {
@@ -777,10 +813,13 @@ void bl_do_chat (struct tgl_state *TLS, int id, const char *title, int title_len
     tgls_messages_mark_read (TLS, C->last, TGLMF_OUT, C->last_read_out);
   }
 
-      
-  if (TLS->callback.chat_update && updates) {
-    TLS->callback.chat_update (TLS, C, updates);
-  }
+void bl_do_chat_set_title (struct tgl_state *TLS, struct tgl_chat *C, const char *s, int l) {
+  if (C->title && tstrlen (C->title) == l && !strncmp (C->title, s, l)) { return; }
+  clear_packet ();
+  out_int (CODE_binlog_chat_set_title);
+  out_int (tgl_get_peer_id (C->id));
+  out_cstring (s, l);
+  add_log_event (TLS, packet_buffer, 4 * (packet_ptr - packet_buffer));
 }
 /* }}} */
 
@@ -875,29 +914,13 @@ void bl_do_encr_chat (struct tgl_state *TLS, int id, long long *access_hash, int
     memcpy (U->first_key_sha, first_key_id, 20);
   }
 
-  if (state) {
-    if (U->state == sc_waiting && *state == sc_ok) {
-      tgl_do_create_keys_end (TLS, U);
-    }
-    if ((int)U->state != *state) {
-      switch (*state) {
-      case sc_request:
-        updates |= TGL_UPDATE_REQUESTED;
-        break;
-      case sc_ok:
-        updates |= TGL_UPDATE_WORKING;
-        vlogprintf (E_WARNING, "Secret chat in ok state\n");
-        break;
-      default:
-        break;
-      } 
-    }
-    U->state = *state;
-  }
-  
-  if (TLS->callback.secret_chat_update && updates) {
-    TLS->callback.secret_chat_update (TLS, U, updates);
-  }
+void bl_do_set_unread (struct tgl_state *TLS, struct tgl_message *M, int unread) {
+  if (M->id != (int)M->id) { bl_do_set_unread_long (TLS, M, unread); }
+  if (unread || !M->unread) { return; }
+  clear_packet ();
+  out_int (CODE_binlog_message_set_unread);
+  out_int ((int)M->id);
+  add_log_event (TLS, packet_buffer, 4 * (packet_ptr - packet_buffer));
 }
 /* }}} */
 

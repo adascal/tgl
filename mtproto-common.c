@@ -66,7 +66,8 @@ static long long rsa_encrypted_chunks, rsa_decrypted_chunks;
 
 #ifndef WIN32
 static int get_random_bytes (struct tgl_state *TLS, unsigned char *buf, int n) {
-  int r = 0, h = open ("/dev/random", O_RDONLY | O_NONBLOCK);
+  ssize_t r = 0;
+  int h = open ("/dev/random", O_RDONLY | O_NONBLOCK);
   if (h >= 0) {
     r = read (h, buf, n);
     if (r > 0) {
@@ -80,9 +81,9 @@ static int get_random_bytes (struct tgl_state *TLS, unsigned char *buf, int n) {
   if (r < n) {
     h = open ("/dev/urandom", O_RDONLY);
     if (h < 0) {
-      return r;
+      return (int)(r);
     }
-    int s = read (h, buf + r, n - r);
+    ssize_t s = read (h, buf + r, n - r);
     close (h);
     if (s > 0) {
       r += s;
@@ -94,7 +95,7 @@ static int get_random_bytes (struct tgl_state *TLS, unsigned char *buf, int n) {
     srand48 (*(long *)buf);
   }
 
-  return r;
+  return (int)(r);
 }
 #else
 static HCRYPTPROV hCryptoServiceProvider = 0;
@@ -157,12 +158,12 @@ void tgl_prng_seed (struct tgl_state *TLS, const char *password_filename, int pa
       vlogprintf (E_WARNING, "Warning: fail to open password file - \"%s\", %s.\n", password_filename, strerror(errno));
     } else {
       unsigned char *a = talloc0 (password_length);
-      int l = read (fd, a, password_length);
+      ssize_t l = read (fd, a, password_length);
       if (l < 0) {
         vlogprintf (E_WARNING, "Warning: fail to read password file - \"%s\", %s.\n", password_filename, strerror(errno));
       } else {
         vlogprintf (E_DEBUG, "read %d bytes from password file.\n", l);
-        TGLC_rand_add (a, l, l);
+        RAND_add (a, (int)(l), l);
       }
       close (fd);
       tfree_secure (a, password_length);
@@ -172,8 +173,8 @@ void tgl_prng_seed (struct tgl_state *TLS, const char *password_filename, int pa
   ensure_ptr (TLS->TGLC_bn_ctx);
 }
 
-int tgl_serialize_bignum (TGLC_bn *b, char *buffer, int maxlen) {
-  int itslen = TGLC_bn_num_bytes (b);
+int tgl_serialize_bignum (BIGNUM *b, char *buffer, size_t maxlen) {
+  int itslen = BN_num_bytes (b);
   int reqlen;
   if (itslen < 254) {
     reqlen = itslen + 1;

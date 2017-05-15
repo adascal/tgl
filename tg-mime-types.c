@@ -3,38 +3,35 @@
 #define MAX_MIME_TYPES_NUM 10000
 
 #include "mime-types.c"
-  
-static int mime_initialized;
-static int mime_type_number;
-static char *mime_type_names[MAX_MIME_TYPES_NUM];
-static char *mime_type_extensions[MAX_MIME_TYPES_NUM];
+#include "tools.h"
 
-static void mime_init (void) {
-  char *start = (char *)mime_types;
-  char *end = start + mime_types_len;
-  mime_initialized = 1;
-  char *c = start;
-  while (c < end) {
-    if (*c == '#') {
-      while (c < end && *c != '\n') {
-        c ++;
-      }
-      if (c < end) {
-        c ++;
-      }
-    } else {
-      while (*c <= ' ' && *c != '\n' && c < end) {
-        c ++;
-      }
-      assert (*c > ' ' && *c != '\n' && c < end);
-      char *name = c;
-      while (*c > ' ' && *c != '\n' && c < end) {
-        c ++;
-      }
-      assert (*c <= ' ' && *c != '\n' && c < end);
-      *c = 0;
-      c ++;
-      while (1) {
+
+char *tg_mime_by_filename (const char *filename) {
+  int l = tstrlen (filename);
+  const char *p = filename - 1 + l;
+  while (p >= filename && *p != '.') {
+    p --;
+  }
+  p ++;
+
+  static int mime_initialized;
+  static int mime_type_number;
+  static char *mime_type_names[MAX_MIME_TYPES_NUM];
+  static char *mime_type_extensions[MAX_MIME_TYPES_NUM];
+  if (!mime_initialized) {
+    char *start = (char *)mime_types;
+    char *end = start + mime_types_len;
+    mime_initialized = 1;
+    char *c = start;
+    while (c < end) {
+      if (*c == '#') {
+        while (c < end && *c != '\n') {
+          c ++;
+        }
+        if (c < end) {
+          c ++;
+        }
+      } else {
         while (*c <= ' ' && *c != '\n' && c < end) {
           c ++;
         }

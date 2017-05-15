@@ -153,8 +153,7 @@ static int alarm_query (struct tgl_state *TLS, struct query *q) {
     q->session = q->DC->sessions[0];
     long long old_id = q->msg_id;
     q->msg_id = tglmp_encrypt_send_message (TLS, q->session->c, q->data, q->data_len, (q->flags & QUERY_FORCE_SEND) | 1);
-    vlogprintf (E_NOTICE, "Resent query #%" INT64_PRINTF_MODIFIER "d as #%" INT64_PRINTF_MODIFIER "d of size %d to DC %d\n", old_id, q->msg_id, 4 * q->data_len, q->DC->id);
-    TLS->queries_tree = tree_insert_query (TLS->queries_tree, q, rand ());
+    TLS->queries_tree = tree_insert_query (TLS->queries_tree, q, irand48 ());
     q->session_id = q->session->session_id;
     if (!(q->session->dc->flags & 4) && !(q->flags & QUERY_FORCE_SEND)) {
       q->session_id = 0;
@@ -246,7 +245,7 @@ struct query *tglq_send_query_ex (struct tgl_state *TLS, struct tgl_dc *DC, int 
   if (TLS->queries_tree) {
     vlogprintf (E_DEBUG + 2, "%" INT64_PRINTF_MODIFIER "d %" INT64_PRINTF_MODIFIER "d\n", q->msg_id, TLS->queries_tree->x->msg_id);
   }
-  TLS->queries_tree = tree_insert_query (TLS->queries_tree, q, rand ());
+  TLS->queries_tree = tree_insert_query (TLS->queries_tree, q, irand48 ());
 
   q->ev = TLS->timer_methods->alloc (TLS, alarm_query_gateway, q);
   TLS->timer_methods->insert (q->ev, q->methods->timeout ? q->methods->timeout : QUERY_TIMEOUT);  
@@ -395,7 +394,8 @@ int tglq_query_error (struct tgl_state *TLS, long long id) {
           }
           wait = 10;
         } else {
-          wait = atoll (error + 11);
+          long long llwait = atoll (error + 11);
+          wait = llwait < INT8_MAX ? (int)(llwait) : INT8_MAX;
         }
         q->flags &= ~QUERY_ACK_RECEIVED;
         TLS->timer_methods->insert (q->ev, wait);
@@ -1263,21 +1263,13 @@ void tgl_do_send_text (struct tgl_state *TLS, tgl_peer_id_t id, const char *file
     }
     return;
   }
-  static char buf[(1 << 20) + 1];
-  int x = read (fd, buf, (1 << 20) + 1);
-  if (x < 0) {
-    tgl_set_query_error (TLS, EBADF, "Can not read from file: %s", strerror(errno));
-    close (fd);
-    if (callback) {
-      callback (TLS, callback_extra, 0, NULL);
-    }
-    return;
-  }
-
+  static const int max_file_size = (1 << 20) + 1;
+  static char buf[max_file_size];
+  int x = (int)(read (fd, buf, max_file_size));
   assert (x >= 0);
-  close (fd);
-  if (x == (1 << 20) + 1) {
-    tgl_set_query_error (TLS, E2BIG, "text file is too big");
+  if (x == max_file_size) {
+    vlogprintf (E_WARNING, "Too big file '%s'\n", file_name);
+    close (fd);
     if (callback) {
       callback (TLS, callback_extra, 0, NULL);
     }
@@ -2035,7 +2027,7 @@ static void send_part (struct tgl_state *TLS, struct send_file *f, void *callbac
       out_int ((f->size + f->part_size - 1) / f->part_size);
     }
     static char buf[512 << 10];
-    int x = read (f->fd, buf, f->part_size);
+    ssize_t x = read (f->fd, buf, f->part_size);
     assert (x > 0);
     f->offset += x;
     TLS->cur_uploaded_bytes += x;
@@ -3620,7 +3612,161 @@ static struct query_methods msg_search_methods = {
   .name = "messages search"
 };
 
-static void _tgl_do_msg_search (struct tgl_state *TLS, struct msg_search_extra *E, void (*callback)(struct tgl_state *TLS,void *callback_extra, int success, int size, struct tgl_message *list[]), void *callback_extra) {
+//int encr_root;
+//unsigned char *encr_prime;
+//int encr_param_version;
+//static BN_CTX *ctx;
+
+void tgl_do_send_accept_encr_chat (struct tgl_state *TLS, struct tgl_secret_chat *E, unsigned char *random, void (*callback)(struct tgl_state *TLS,void *callback_extra, int success, struct tgl_secret_chat *E), void *callback_extra) {
+  int i;
+  int ok = 0;
+  for (i = 0; i < 64; i++) {
+    if (E->key[i]) {
+      ok = 1;
+      break;
+    }
+  }
+  if (ok) { 
+    if (callback) {
+      callback (TLS, callback_extra, 1, E);
+    }
+    return; 
+  } // Already generated key for this chat
+  assert (E->g_key);
+  assert (TLS->BN_ctx);
+  unsigned char random_here[256];
+  tglt_secure_random (random_here, 256);
+  for (i = 0; i < 256; i++) {
+    random[i] ^= random_here[i];
+  }
+  BIGNUM *b = BN_bin2bn (random, 256, 0);
+  ensure_ptr (b);
+  BIGNUM *g_a = BN_bin2bn (E->g_key, 256, 0);
+  ensure_ptr (g_a);
+  assert (tglmp_check_g (TLS, TLS->encr_prime, g_a) >= 0);
+  //if (!ctx) {
+  //  ctx = BN_CTX_new ();
+  //  ensure_ptr (ctx);
+  //}
+  BIGNUM *p = BN_bin2bn (TLS->encr_prime, 256, 0); 
+  ensure_ptr (p);
+  BIGNUM *r = BN_new ();
+  ensure_ptr (r);
+  ensure (BN_mod_exp (r, g_a, b, p, TLS->BN_ctx));
+  static unsigned char kk[256];
+  memset (kk, 0, sizeof (kk));
+  BN_bn2bin (r, kk + (256 - BN_num_bytes (r)));
+  for (i = 0; i < 256; i++) {
+    kk[i] ^= E->nonce[i];
+  }
+  static unsigned char sha_buffer[20];
+  sha1 (kk, 256, sha_buffer);
+
+  bl_do_encr_chat_set_key (TLS, E, kk, *(long long *)(sha_buffer + 12));
+  bl_do_encr_chat_set_sha (TLS, E, sha_buffer);
+
+  clear_packet ();
+  out_int (CODE_messages_accept_encryption);
+  out_int (CODE_input_encrypted_chat);
+  out_int (tgl_get_peer_id (E->id));
+  out_long (E->access_hash);
+  
+  ensure (BN_set_word (g_a, TLS->encr_root));
+  ensure (BN_mod_exp (r, g_a, b, p, TLS->BN_ctx));
+  static unsigned char buf[256];
+  memset (buf, 0, sizeof (buf));
+  BN_bn2bin (r, buf + (256 - BN_num_bytes (r)));
+  out_cstring ((void *)buf, 256);
+
+  out_long (E->key_fingerprint);
+  BN_clear_free (b);
+  BN_clear_free (g_a);
+  BN_clear_free (p);
+  BN_clear_free (r);
+
+  tglq_send_query (TLS, TLS->DC_working, packet_ptr - packet_buffer, packet_buffer, &send_encr_accept_methods, E, callback, callback_extra);
+}
+
+void tgl_do_create_keys_end (struct tgl_state *TLS, struct tgl_secret_chat *U) {
+  assert (TLS->encr_prime);
+  BIGNUM *g_b = BN_bin2bn (U->g_key, 256, 0);
+  ensure_ptr (g_b);
+  assert (tglmp_check_g (TLS, TLS->encr_prime, g_b) >= 0);
+  BIGNUM *p = BN_bin2bn (TLS->encr_prime, 256, 0); 
+  ensure_ptr (p);
+  BIGNUM *r = BN_new ();
+  ensure_ptr (r);
+  BIGNUM *a = BN_bin2bn ((void *)U->key, 256, 0);
+  ensure_ptr (a);
+  ensure (BN_mod_exp (r, g_b, a, p, TLS->BN_ctx));
+
+  unsigned char *t = talloc (256);
+  memcpy (t, U->key, 256);
+  
+  memset (U->key, 0, sizeof (U->key));
+  BN_bn2bin (r, (void *)(((char *)(U->key)) + (256 - BN_num_bytes (r))));
+  int i;
+  for (i = 0; i < 64; i++) {
+    U->key[i] ^= *(((int *)U->nonce) + i);
+  }
+  
+  static unsigned char sha_buffer[20];
+  sha1 ((void *)U->key, 256, sha_buffer);
+  long long k = *(long long *)(sha_buffer + 12);
+  if (k != U->key_fingerprint) {
+    vlogprintf (E_WARNING, "Key fingerprint mismatch (my 0x%llx 0x%llx)\n", (unsigned long long)k, (unsigned long long)U->key_fingerprint);
+    U->state = sc_deleted;
+  }
+
+  memcpy (U->first_key_sha, sha_buffer, 20);
+  tfree_secure (t, 256);
+  
+  BN_clear_free (p);
+  BN_clear_free (g_b);
+  BN_clear_free (r);
+  BN_clear_free (a);
+}
+
+void tgl_do_send_create_encr_chat (struct tgl_state *TLS, void *x, unsigned char *random, void (*callback)(struct tgl_state *TLS, void *callback_extra, int success, struct tgl_secret_chat *E), void *callback_extra) {
+  int user_id = (long)x;
+  int i;
+  unsigned char random_here[256];
+  tglt_secure_random (random_here, 256);
+  for (i = 0; i < 256; i++) {
+    random[i] ^= random_here[i];
+  }
+  BIGNUM *a = BN_bin2bn (random, 256, 0);
+  ensure_ptr (a);
+  BIGNUM *p = BN_bin2bn (TLS->encr_prime, 256, 0); 
+  ensure_ptr (p);
+ 
+  BIGNUM *g = BN_new ();
+  ensure_ptr (g);
+
+  ensure (BN_set_word (g, TLS->encr_root));
+
+  BIGNUM *r = BN_new ();
+  ensure_ptr (r);
+
+  ensure (BN_mod_exp (r, g, a, p, TLS->BN_ctx));
+
+  BN_clear_free (a);
+
+  static char g_a[256];
+  memset (g_a, 0, 256);
+
+  BN_bn2bin (r, (void *)(g_a + (256 - BN_num_bytes (r))));
+  
+  int t = irand48 ();
+  while (tgl_peer_get (TLS, TGL_MK_ENCR_CHAT (t))) {
+    t = irand48 ();
+  }
+
+  bl_do_encr_chat_init (TLS, t, user_id, (void *)random, (void *)g_a);
+  tgl_peer_t *_E = tgl_peer_get (TLS, TGL_MK_ENCR_CHAT (t));
+  assert (_E);
+  struct tgl_secret_chat *E = &_E->encr_chat;
+  
   clear_packet ();
   if (tgl_get_peer_type (E->id) == TGL_PEER_UNKNOWN) {
     out_int (CODE_messages_search_global);
