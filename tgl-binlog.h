@@ -43,8 +43,39 @@ void bl_do_set_channel_pts (struct tgl_state *TLS, int id, int pts);
 
 void bl_do_set_auth_key (struct tgl_state *TLS, int num, unsigned char *buf);
 
-void bl_do_set_msg_id (struct tgl_state *TLS, struct tgl_message_id *old_id, struct tgl_message_id *new_id);
-void bl_do_message_delete (struct tgl_state *TLS, struct tgl_message_id *id);
+void bl_do_create_chat (struct tgl_state *TLS, struct tgl_chat *C, int y, const char *s, int l, int users_num, int date, int version, struct tgl_file_location *big, struct tgl_file_location *small);
+void bl_do_chat_forbid (struct tgl_state *TLS, struct tgl_chat *C, int on);
+void bl_do_chat_set_title (struct tgl_state *TLS, struct tgl_chat *C, const char *s, int l);
+void bl_do_chat_set_photo (struct tgl_state *TLS, struct tgl_chat *C, struct tgl_file_location *big, struct tgl_file_location *small);
+void bl_do_chat_set_date (struct tgl_state *TLS, struct tgl_chat *C, int date);
+void bl_do_chat_set_set_in_chat (struct tgl_state *TLS, struct tgl_chat *C, int on);
+void bl_do_chat_set_version (struct tgl_state *TLS, struct tgl_chat *C, int version, int user_num);
+void bl_do_chat_set_admin (struct tgl_state *TLS, struct tgl_chat *C, int admin);
+void bl_do_chat_set_participants (struct tgl_state *TLS, struct tgl_chat *C, int version, int user_num, struct tgl_chat_user *users);
+void bl_do_chat_set_full_photo (struct tgl_state *TLS, struct tgl_chat *U, const int *start, int len);
+void bl_do_chat_add_user (struct tgl_state *TLS, struct tgl_chat *C, int version, int user, int inviter, int date);
+void bl_do_chat_del_user (struct tgl_state *TLS, struct tgl_chat *C, int version, int user);
+
+void bl_do_create_message_text (struct tgl_state *TLS, int msg_id, int from_id, int to_type, int to_id, int date, int unread, int l, const char *s);
+void bl_do_create_message_text_fwd (struct tgl_state *TLS, int msg_id, int from_id, int to_type, int to_id, int date, int fwd, int fwd_date, int unread, int l, const char *s);
+void bl_do_create_message_service (struct tgl_state *TLS, int msg_id, int from_id, int to_type, int to_id, int date, int unread, const int *data, int len);
+void bl_do_create_message_service_fwd (struct tgl_state *TLS, int msg_id, int from_id, int to_type, int to_id, int date, int fwd, int fwd_date, int unread, const int *data, int len);
+void bl_do_create_message_media (struct tgl_state *TLS, int msg_id, int from_id, int to_type, int to_id, int date, int unread, int l, const char *s, const int *data, int len);
+void bl_do_create_message_media_encr_pending (struct tgl_state *TLS, long long msg_id, int from_id, int to_type, int to_id, int date, int l, const char *s, const int *data, int len);
+void bl_do_create_message_media_encr_sent (struct tgl_state *TLS, long long msg_id, const int *data, int len);
+void bl_do_create_message_media_fwd (struct tgl_state *TLS, int msg_id, int from_id, int to_type, int to_id, int date, int fwd, int fwd_date, int unread, int l, const char *s, const int *data, int len);
+void bl_do_create_message_media_encr (struct tgl_state *TLS, long long msg_id, int from_id, int to_type, int to_id, int date, int l, const char *s, const int *data, int len, const int *data2, int len2);
+void bl_do_create_message_service_encr (struct tgl_state *TLS, long long msg_id, int from_id, int to_type, int to_id, int date, const int *data, int len);
+void bl_do_send_message_text (struct tgl_state *TLS, long long msg_id, int from_id, int to_type, int to_id, int date, int l, const char *s);
+void bl_do_send_message_action_encr (struct tgl_state *TLS, long long msg_id, int from_id, int to_type, int to_id, int date, int l, const int *s);
+void bl_do_set_unread (struct tgl_state *TLS, struct tgl_message *M, int unread);
+void bl_do_set_message_sent (struct tgl_state *TLS, struct tgl_message *M);
+void bl_do_set_msg_id (struct tgl_state *TLS, struct tgl_message *M, int id);
+void bl_do_msg_set_outbound (struct tgl_state *TLS, long long id);
+void bl_do_delete_msg (struct tgl_state *TLS, struct tgl_message *M);
+
+void bl_do_msg_seq_update (struct tgl_state *TLS, long long id);
+void bl_do_msg_update (struct tgl_state *TLS, long long id);
 
 void bl_do_peer_delete (struct tgl_state *TLS, tgl_peer_id_t id);
 
